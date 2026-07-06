@@ -1,0 +1,117 @@
+name: Typst Notes Release (reusable)
+
+# ── 可复用工作流 ────────────────────────────────────────────────
+# 课程仓库通过一个 6 行的 stub 调用它：
+#
+#   jobs:
+#     build:
+#       uses: ClosureScope/NotesCI/.github/workflows/typst-release.yml@main
+#
+# 装字体、编译、发 Release、生成 README 的全部逻辑都在这里维护一份。
+# 课程相关信息由课程仓库自己的 course.toml 提供，本工作流对所有课程通用。
+
+on:
+  workflow_call:
+    inputs:
+      notes-ci-ref:
+        description: "Which ref of NotesCI to use for the README generator"
+        type: string
+        default: main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout course repository
+        uses: actions/checkout@v4
+
+      - name: Checkout NotesCI (for scripts)
+        uses: actions/checkout@v4
+        with:
+          repository: ClosureScope/NotesCI
+          ref: ${{ inputs.notes-ci-ref }}
+          path: .notes-ci
+
+      - name: Read course metadata
+        id: course
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          with open("course.toml", "rb") as f:
+              c = tomllib.load(f)
+          print(f"name_en={c.get('name_en', 'Course')}")
+          PY
+
+      - name: Regenerate README from course.toml
+        run: |
+          python3 .notes-ci/scripts/gen_readme.py
+          if ! git diff --quiet README.md; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "chore: regenerate README from course.toml"
+            git push
+          fi
+
+      - name: Setup Typst
+        uses: typst-community/setup-typst@v4
+
+      - name: Install Fonts
+        run: |
+          mkdir -p ~/.local/share/fonts
+
+          # Noto Serif SC — all weights
+          for weight in ExtraLight Light Regular Medium SemiBold Bold; do
+            wget -q -O ~/.local/share/fonts/NotoSerifSC-${weight}.otf \
+              "https://github.com/notofonts/noto-cjk/raw/main/Serif/SubsetOTF/SC/NotoSerifSC-${weight}.otf"
+          done
+
+          # Noto Sans SC — all weights
+          for weight in Thin Light Regular Medium Bold Black; do
+            wget -q -O ~/.local/share/fonts/NotoSansSC-${weight}.otf \
+              "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-${weight}.otf"
+          done
+
+          # FandolKai
+          wget -q -O /tmp/fandol.zip "https://mirrors.ctan.org/fonts/fandol.zip"
+          unzip -qo /tmp/fandol.zip "fandol/FandolKai-Regular.otf" -d /tmp/
+          cp /tmp/fandol/FandolKai-Regular.otf ~/.local/share/fonts/
+
+          # Libertinus Serif — Regular + Bold + Semibold for headings
+          wget -q -O /tmp/Libertinus.tar.xz "https://github.com/alerque/libertinus/releases/download/v7.040/Libertinus-7.040.tar.xz"
+          tar -xJf /tmp/Libertinus.tar.xz -C /tmp/ \
+            "Libertinus-7.040/static/OTF/LibertinusSerif-Regular.otf" \
+            "Libertinus-7.040/static/OTF/LibertinusSerif-Bold.otf" \
+            "Libertinus-7.040/static/OTF/LibertinusSerif-Semibold.otf" \
+            "Libertinus-7.040/static/OTF/LibertinusSerif-Italic.otf" \
+            "Libertinus-7.040/static/OTF/LibertinusSerif-BoldItalic.otf" \
+            "Libertinus-7.040/static/OTF/LibertinusSerif-SemiboldItalic.otf"
+          cp /tmp/Libertinus-7.040/static/OTF/LibertinusSerif-*.otf ~/.local/share/fonts/
+
+          fc-cache -fv
+
+      - name: Compile Typst to PDF
+        # 编译除 template.typ 外的所有 .typ 文件
+        run: |
+          for f in *.typ; do
+            [ "$f" = "template.typ" ] && continue
+            echo "Compiling $f"
+            typst compile "$f"
+          done
+
+      - name: Generate Automated Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "${{ steps.course.outputs.name_en }} — Latest Notes"
+          body: |
+            Automated build of the latest notes for ${{ steps.course.outputs.name_en }}.
+            Last updated: ${{ github.event.head_commit.timestamp }}
+          files: |
+            *.pdf
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
