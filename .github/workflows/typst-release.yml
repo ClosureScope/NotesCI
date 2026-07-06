@@ -91,6 +91,12 @@ jobs:
             "Libertinus-7.040/static/OTF/LibertinusSerif-SemiboldItalic.otf"
           cp /tmp/Libertinus-7.040/static/OTF/LibertinusSerif-*.otf ~/.local/share/fonts/
 
+          # JetBrains Mono — monospace for code blocks
+          wget -q -O /tmp/JetBrainsMono.zip \
+            "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip"
+          unzip -qo /tmp/JetBrainsMono.zip "fonts/ttf/*.ttf" -d /tmp/JetBrainsMono/
+          cp /tmp/JetBrainsMono/fonts/ttf/*.ttf ~/.local/share/fonts/
+
           fc-cache -fv
 
       - name: Compile Typst to PDF
